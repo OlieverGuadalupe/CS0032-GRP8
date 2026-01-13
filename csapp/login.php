@@ -1,5 +1,6 @@
 <?php
 session_start();
+require_once 'logger.php';
 
 // Hardcoded username and password (replace with a database or environment variables in production)
 $valid_username = 'admin';
@@ -11,9 +12,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($username === $valid_username && $password === $valid_password) {
         $_SESSION['logged_in'] = true;
+
+        // Log successful login
+        Logger::info("User logged in successfully", [
+            'username' => $username,
+            'ip' => $_SERVER['REMOTE_ADDR']
+        ]);
+        
         header('Location: index.php');
         exit;
     } else {
+
+        // Log failed attempt
+        Logger::error("Failed login attempt", [
+            'attempted_username' => $username,
+            'ip' => $_SERVER['REMOTE_ADDR'],
+            'user_agent' => $_SERVER['HTTP_USER_AGENT']
+        ]);
+
         $error_message = "Invalid username or password.";
     }
 }
