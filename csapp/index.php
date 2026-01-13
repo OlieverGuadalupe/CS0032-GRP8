@@ -1,11 +1,13 @@
 <?php
 session_start();
 if (!isset($_SESSION['logged_in'])) {
+    Logger::info("Unauthorized access attempt", ['ip' => $_SERVER['REMOTE_ADDR']]);
     header('Location: login.php');
     exit;
 }
 
 require_once 'db.php';
+require_once 'logger.php';
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -62,8 +64,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $stmt = $pdo->query($sql);
         $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        Logger::debug("Segmentation query executed", ['type' => $segmentationType]);
     } catch (PDOException $e) {
-        die("Query execution failed: " . $e->getMessage());
+        Logger::error("Query execution failed", [
+            'type' => $segmentationType,
+            'error' => $e->getMessage(),
+            'sql' => $sql // Use carefully in production if SQL contains user input
+        ]);
+        $error_message = "An internal error occurred while fetching results.";
     }
 }
 ?>
@@ -153,7 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <canvas id="mainChart" width="400" height="200"></canvas>
                 </div>
                 <div class="col-md-4">
-                    <canvas id="pieChart" width="200" height="200"></canvas>
+                    <canvas id="doughnutChart" width="200" height="200"></canvas>
                 </div>
             </div>
 
@@ -167,21 +175,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 let insights = '';
                 const totalCustomers = data.reduce((a, b) => a + b, 0);
 
+                // FIX: Helper function to safely calculate percentage and handle division by zero
+                const getPercent = (value) => {
+                if (!totalCustomers || totalCustomers === 0) return '0.0';
+                return ((value / totalCustomers) * 100).toFixed(1);
+                };
+
+                // FIX: Helper to safe-guard Math.max against empty arrays (which returns -Infinity)
+                const maxVal = data.length > 0 ? Math.max(...data) : 0;
+
+                // Helper to find the index of the max value safely
+                const maxIndex = data.length > 0 ? data.indexOf(maxVal) : -1;
+
                 switch(segmentationType) {
                     case 'gender':
+                        // Pre-calculate income stats safely to avoid repeating code in the HTML string
+                        let incomeStatsHTML = '';
+                        if (results.length > 0 && results[0].avg_income) {
+                            const incomes = results.map(r => parseFloat(r.avg_income || 0));
+                            const minInc = Math.min(...incomes);
+                            const maxInc = Math.max(...incomes);
+                            const gap = maxInc - minInc;
+                            
+                            incomeStatsHTML = `
+                                <li>Average income across genders ranges from $${minInc.toLocaleString()} to $${maxInc.toLocaleString()}</li>
+                                <li>Income gap between genders: $${gap.toLocaleString()}</li>
+                            `;
+                        }
+
                         insights = `<ul>
                             <li>Total customers analyzed: ${totalCustomers.toLocaleString()}</li>
                             <li>Gender distribution shows ${labels.length} categories</li>
-                            <li>Largest segment: ${labels[data.indexOf(Math.max(...data))]} with ${Math.max(...data).toLocaleString()} customers (${(Math.max(...data)/totalCustomers*100).toFixed(1)}%)</li>
-                            ${results.length > 0 && results[0].avg_income ? `<li>Average income across genders ranges from $${Math.min(...results.map(r => parseFloat(r.avg_income))).toLocaleString()} to $${Math.max(...results.map(r => parseFloat(r.avg_income))).toLocaleString()}</li>` : ''}
+                            <li>Largest segment: ${maxIndex >= 0 ? labels[maxIndex] : 'N/A'} with ${maxVal.toLocaleString()} customers (${getPercent(maxVal)}%)</li>
+                            ${incomeStatsHTML}
                         </ul>`;
                         break;
 
                     case 'region':
+                        // Calculate top 3 sum safely
+                        const top3Sum = (data[0] || 0) + (data[1] || 0) + (data[2] || 0);
+                        
                         insights = `<ul>
                             <li>Total customers across ${labels.length} regions: ${totalCustomers.toLocaleString()}</li>
-                            <li>Top region: ${labels[0]} with ${data[0].toLocaleString()} customers</li>
-                            <li>Regional concentration: Top 3 regions represent ${((data[0] + (data[1]||0) + (data[2]||0))/totalCustomers*100).toFixed(1)}% of total customers</li>
+                            <li>Top region: ${labels[0] || 'N/A'} with ${(data[0] || 0).toLocaleString()} customers</li>
+                            <li>Regional concentration: Top 3 regions represent ${getPercent(top3Sum)}% of total customers</li>
                             ${results.length > 0 && results[0].avg_purchase_amount ? `<li>Purchase amounts vary from $${Math.min(...results.map(r => parseFloat(r.avg_purchase_amount))).toLocaleString()} to $${Math.max(...results.map(r => parseFloat(r.avg_purchase_amount))).toLocaleString()} across regions</li>` : ''}
                         </ul>`;
                         break;
@@ -189,7 +226,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     case 'age_group':
                         insights = `<ul>
                             <li>Customer base distributed across ${labels.length} age groups</li>
-                            <li>Dominant age group: ${labels[data.indexOf(Math.max(...data))]} with ${Math.max(...data).toLocaleString()} customers (${(Math.max(...data)/totalCustomers*100).toFixed(1)}%)</li>
+                            <li>Dominant age group: ${maxIndex >= 0 ? labels[maxIndex] : 'N/A'} with ${maxVal.toLocaleString()} customers (${getPercent(maxVal)}%)</li>
                             ${results.length > 0 && results[0].avg_income ? `<li>Income peaks in the ${results.reduce((max, r) => parseFloat(r.avg_income) > parseFloat(max.avg_income) ? r : max).age_group || results[0].age_group} age group at $${Math.max(...results.map(r => parseFloat(r.avg_income))).toLocaleString()}</li>` : ''}
                             ${results.length > 0 && results[0].avg_purchase_amount ? `<li>Highest spending age group: ${results.reduce((max, r) => parseFloat(r.avg_purchase_amount) > parseFloat(max.avg_purchase_amount) ? r : max).age_group || results[0].age_group}</li>` : ''}
                         </ul>`;
@@ -198,7 +235,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     case 'income_bracket':
                         insights = `<ul>
                             <li>Customers segmented into ${labels.length} income brackets</li>
-                            <li>Largest income segment: ${labels[data.indexOf(Math.max(...data))]} (${(Math.max(...data)/totalCustomers*100).toFixed(1)}% of customers)</li>
+                            <li>Largest income segment: ${maxIndex >= 0 ? labels[maxIndex] : 'N/A'} (${getPercent(maxVal)}% of customers)</li>
                             ${results.length > 0 && results[0].avg_purchase_amount ? `<li>Purchase behavior: ${results.reduce((max, r) => parseFloat(r.avg_purchase_amount) > parseFloat(max.avg_purchase_amount) ? r : max).income_bracket || results[0].income_bracket} shows highest average spending at $${Math.max(...results.map(r => parseFloat(r.avg_purchase_amount))).toLocaleString()}</li>` : ''}
                             <li>Income-purchase correlation can guide targeted marketing strategies</li>
                         </ul>`;
@@ -210,12 +247,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             const largestCluster = clusterMetadata.reduce((max, c) =>
                                 c.customer_count > max.customer_count ? c : max
                             );
+
+                            // 1. Calculate Value Leader
+                        const valueLeader = clusterMetadata.reduce((max, c) => 
+                            (c.avg_spend * c.customer_count) > (max.avg_spend * max.customer_count) ? c : max
+                        );
+
+                        // 2. Identify the "Differentiator" (The metric that varies most between clusters)
+                        const topTrait = clusterMetadata[0].dominant_characteristic || "purchasing behavior";
+                            
                             insights = `<ul>
-                                <li>Advanced k-means clustering identified <strong>${clusterMetadata.length} distinct customer segments</strong></li>
-                                <li>Largest segment: <strong>${largestCluster.cluster_name}</strong> with ${parseInt(largestCluster.customer_count).toLocaleString()} customers (${((largestCluster.customer_count/totalCustomers)*100).toFixed(1)}%)</li>
-                                <li>Clusters range from "${clusterMetadata[0].cluster_name}" to "${clusterMetadata[clusterMetadata.length-1].cluster_name}"</li>
-                                <li>Each cluster has unique demographics, income levels, and purchasing behaviors - view detailed analysis below</li>
-                                <li><strong>Actionable insights:</strong> Scroll down to see cluster characteristics, statistics, visualizations, and marketing recommendations</li>
+                                <li><strong>Segmentation Profile:</strong> Advanced k-means identified <strong>${clusterMetadata.length}</strong> segments primarily differentiated by <strong>${topTrait}</strong>.</li>
+                                <li><strong>Volume Leader:</strong> <strong>${largestCluster.cluster_name}</strong> contains ${((largestCluster.customer_count/totalCustomers)*100).toFixed(1)}% of your database.</li>
+                                <li><strong>Value Concentration:</strong> The <strong>${valueLeader.cluster_name}</strong> segment is your most profitable group, contributing the highest revenue density.</li>
+                                <li><strong>Strategic Focus:</strong> We recommend prioritizing <strong>${valueLeader.cluster_name}</strong> for loyalty rewards and <strong>${clusterMetadata.find(c => c.customer_count < largestCluster.customer_count).cluster_name}</strong> for growth-based promotions.</li>
+                                <li><strong>Next Steps:</strong> Export these segments directly to your CRM for personalized email automation.</li>
                             </ul>`;
                         } else {
                             // Fallback to original insights if metadata not available
@@ -243,58 +289,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Main Bar/Line Chart
                 const ctx1 = document.getElementById('mainChart').getContext('2d');
-                const chartType = (segmentationType === 'age_group' || segmentationType === 'income_bracket') ? 'line' : 'bar';
+                
+                // Default settings (Bar Chart)
+                let chartType = 'bar';
+                let bgColors = 'rgba(54, 162, 235, 0.6)'; // Default Blue
+                let borderColors = 'rgba(54, 162, 235, 1)';
+                let chartOptions = {
+                    indexAxis: 'x',
+                    responsive: true,
+                    plugins: {
+                        title: { 
+                            display: true, 
+                            text: 'Customer Distribution by ' + segmentationType.replace('_', ' ').toUpperCase() 
+                        },
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                };
 
+                // Logic to switch chart types based on segmentation
+                if (segmentationType === 'region') {
+                    chartOptions.indexAxis = 'y'; // Switch to Horizontal
+                    } else if (segmentationType === 'purchase_tier') {
+                    // Switch to Polar Area Chart
+                    chartType = 'polarArea';
+                    
+                    // Distinct colors for tiers
+                    bgColors = [
+                        'rgba(255, 99, 132, 0.7)', // Red
+                        'rgba(255, 205, 86, 0.7)', // Yellow
+                        'rgba(75, 192, 192, 0.7)'  // Green
+                    ];
+                    borderColors = '#ffffff'; // White borders look better on Polar
+
+                    // Polar specific options
+                    chartOptions = {
+                        responsive: true,
+                        plugins: {
+                            title: { display: true, text: 'Spending Power Distribution' },
+                            legend: { position: 'right', display: true }
+                        },
+                        scales: {
+                            r: {
+                                ticks: { backdropColor: 'transparent', z: 1 }
+                            }
+                        }
+                    };
+                } else if (segmentationType === 'age_group' || segmentationType === 'income_bracket') {
+                            chartType = 'line';
+                            bgColors = 'rgba(54, 162, 235, 0.2)';
+                        }
+
+                // Initialize Main Chart
                 new Chart(ctx1, {
                     type: chartType,
                     data: {
                         labels: labels,
                         datasets: [{
-                            label: '<?= ucfirst(str_replace('_', ' ', array_keys($results[0])[1])) ?>',
+                            label: 'Customer Count',
                             data: data,
-                            backgroundColor: chartType === 'bar' ? 'rgba(54, 162, 235, 0.6)' : 'rgba(54, 162, 235, 0.2)',
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            borderWidth: 2,
-                            fill: chartType === 'line'
+                            backgroundColor: bgColors,
+                            borderColor: borderColors,
+                            borderWidth: 1,
+                            fill: (chartType === 'line')
                         }]
                     },
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: 'Customer Distribution by <?= ucfirst(str_replace('_', ' ', $segmentationType)) ?>'
-                            },
-                            legend: {
-                                display: true
-                            }
-                        },
-                        scales: {
-                            y: {
-                                beginAtZero: true
-                            }
-                        }
-                    }
+                    options: chartOptions
                 });
 
-                // Pie Chart for Distribution
-                const ctx2 = document.getElementById('pieChart').getContext('2d');
-                const colors = [
-                    'rgba(255, 99, 132, 0.8)',
-                    'rgba(54, 162, 235, 0.8)',
-                    'rgba(255, 206, 86, 0.8)',
-                    'rgba(75, 192, 192, 0.8)',
-                    'rgba(153, 102, 255, 0.8)',
-                    'rgba(255, 159, 64, 0.8)'
+                // --- 3. Initialize Doughnut Chart (Side Chart) ---
+                const ctx2 = document.getElementById('doughnutChart').getContext('2d');
+                const doughnutColors = [
+                    'rgba(255, 99, 132, 0.8)', 'rgba(54, 162, 235, 0.8)',
+                    'rgba(255, 206, 86, 0.8)', 'rgba(75, 192, 192, 0.8)',
+                    'rgba(153, 102, 255, 0.8)', 'rgba(255, 159, 64, 0.8)'
                 ];
 
                 new Chart(ctx2, {
-                    type: 'pie',
+                    type: 'doughnut',
                     data: {
                         labels: labels,
                         datasets: [{
                             data: data,
-                            backgroundColor: colors.slice(0, labels.length),
+                            backgroundColor: doughnutColors.slice(0, labels.length),
                             borderWidth: 2,
                             borderColor: '#fff'
                         }]
@@ -302,22 +381,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     options: {
                         responsive: true,
                         plugins: {
-                            title: {
-                                display: true,
-                                text: 'Distribution %'
-                            },
+                            title: { display: true, text: 'Distribution %' },
                             legend: {
                                 position: 'bottom',
-                                labels: {
-                                    boxWidth: 15,
-                                    font: {
-                                        size: 10
-                                    }
-                                }
+                                labels: { boxWidth: 15, font: { size: 10 } }
                             }
                         }
                     }
                 });
+            </script>
             </script>
 
             <!-- Enhanced Cluster Visualizations -->
