@@ -19,6 +19,7 @@ set_time_limit(0);
 ini_set('memory_limit', '256M');
 
 require_once 'db.php';
+require_once 'logger.php';
 
 // Configuration
 define('DEFAULT_CLUSTERS', 5);
@@ -212,6 +213,10 @@ class KMeansClustering {
 
             // Check convergence
             if ($this->hasConverged($this->centroids, $newCentroids)) {
+                Logger::info("K-Means converged", [
+                    'iterations' => $iteration + 1,
+                    'k' => $this->k
+                ]);
                 echo "✓ Converged after " . ($iteration + 1) . " iterations\n";
                 break;
             }
@@ -265,10 +270,42 @@ function getSpendingCategory($avgPurchase) {
     return "Premium";
 }
 
-function generateClusterName($avgAge, $avgIncome, $avgPurchase) {
-    return getIncomeCategory($avgIncome) . " " .
-           getAgeCategory($avgAge) . " " .
-           getSpendingCategory($avgPurchase);
+function generateClusterName($avgAge, $avgIncome, $avgPurchase, $domGender, $domRegion) {
+    // 1. Get Categories
+    $ageCat   = getAgeCategory($avgAge);
+    $incCat   = getIncomeCategory($avgIncome);
+    $spendCat = getSpendingCategory($avgPurchase);
+
+    // 2. Determine Financial Behavior
+    // Logic: Compare Income vs Spending to determine intent
+    $isHighSpend = ($spendCat == "Active" || $spendCat == "Premium");
+    $isHighInc   = ($incCat == "Affluent" || $incCat == "High-Income");
+    $adjective   = "Standard";
+
+    if ($isHighInc && $isHighSpend) {
+        $adjective = "Elite";       // Wealthy & Spends
+    } elseif ($isHighInc && !$isHighSpend) {
+        $adjective = "Calculated";  // Wealthy & Saves
+    } elseif (!$isHighInc && $isHighSpend) {
+        $adjective = "Aspiring";    // Low Income & Spends
+    } else {
+        $adjective = "Thrifty";     // Low Income & Saves
+    }
+
+    // 3. Determine "Noun"
+    
+    // Handle specific phrasing for grammar
+    $genderTerm = $domGender;
+    if ($domGender === 'Mixed') {
+        $genderTerm = 'Shoppers'; // Fallback for mixed groups
+    } elseif ($domGender === 'Male') {
+        $genderTerm = 'Men';
+    } elseif ($domGender === 'Female') {
+        $genderTerm = 'Women';
+    }
+
+    // 4. Assemble: [Adjective] [Region] [Age] [Gender/Noun]
+    return "$adjective $domRegion $ageCat $genderTerm";
 }
 
 function generateClusterDescription($clusterStats) {
@@ -407,7 +444,7 @@ function calculateClusterStatistics($pdo, $labels, $k) {
         $stmt = $pdo->prepare($sql);
         $stmt->execute($customerIds);
         $genderRow = $stmt->fetch(PDO::FETCH_ASSOC);
-        $stats['dominant_gender'] = $genderRow['gender'] ?? 'Unknown';
+        $stats['dominant_gender'] = $genderRow['gender'] ?? 'Mixed';
 
         // Get dominant region
         $sql = "SELECT region, COUNT(*) as cnt
@@ -419,6 +456,8 @@ function calculateClusterStatistics($pdo, $labels, $k) {
         $stmt = $pdo->prepare($sql);
         $stmt->execute($customerIds);
         $regionRow = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        $rawRegion = $regionRow['region'] ?? 3;
         $stats['dominant_region'] = $regionRow['region'] ?? 'Unknown';
 
         $stats['cluster_id'] = $i;
@@ -459,7 +498,13 @@ function updateDatabase($pdo, $labels, $clusterStats) {
         ");
 
         foreach ($clusterStats as $stats) {
-            $clusterName = generateClusterName($stats['avg_age'], $stats['avg_income'], $stats['avg_purchase_amount']);
+            $clusterName = generateClusterName(
+                $stats['avg_age'], 
+                $stats['avg_income'], 
+                $stats['avg_purchase_amount'],
+                $stats['dominant_gender'],
+                $stats['dominant_region']
+                );
             $description = generateClusterDescription($stats);
             $recommendations = generateBusinessRecommendations($stats);
 
@@ -486,9 +531,13 @@ function updateDatabase($pdo, $labels, $clusterStats) {
         echo "✓ Inserted metadata for " . count($clusterStats) . " clusters\n";
 
         $pdo->commit();
+        Logger::info("Database updated with new cluster results", ['count' => count($labels)]);
     } catch (PDOException $e) {
         $pdo->rollBack();
-        die("✗ Error updating database: " . $e->getMessage() . "\n");
+        Logger::error("Critical: Database update failed. Transaction rolled back.", [
+            'exception' => $e->getMessage()
+        ]);
+        die("✗ Error updating database. Check logs.");
     }
 }
 
@@ -548,9 +597,18 @@ echo str_repeat("=", 70) . "\n";
 echo "CLUSTERING SUMMARY\n";
 echo str_repeat("=", 70) . "\n\n";
 
+$displayId = 1;
+
 foreach ($clusterStats as $stats) {
-    $clusterName = generateClusterName($stats['avg_age'], $stats['avg_income'], $stats['avg_purchase_amount']);
-    echo "Cluster {$stats['cluster_id']}: $clusterName\n";
+    $clusterName = generateClusterName(
+        $stats['avg_age'], 
+        $stats['avg_income'], 
+        $stats['avg_purchase_amount'],
+        $stats['dominant_gender'],
+        $stats['dominant_region']
+        );
+    echo "Cluster {$displayId}: {$clusterName}\n";
+    echo "  (Internal ID: {$stats['cluster_id']})\n";
     echo "  Customers: " . number_format($stats['customer_count']) . "\n";
     echo "  Age: {$stats['avg_age']} ({$stats['age_min']}-{$stats['age_max']})\n";
     echo "  Income: $" . number_format($stats['avg_income'], 0) .
@@ -558,6 +616,8 @@ foreach ($clusterStats as $stats) {
     echo "  Purchase: $" . number_format($stats['avg_purchase_amount'], 0) .
          " ($" . number_format($stats['purchase_min'], 0) . "-$" . number_format($stats['purchase_max'], 0) . ")\n";
     echo "  Gender: {$stats['dominant_gender']}, Region: {$stats['dominant_region']}\n\n";
+
+    $displayId++;
 }
 
 echo str_repeat("=", 70) . "\n";
