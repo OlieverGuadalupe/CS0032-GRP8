@@ -403,13 +403,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                     <?php
                     $total_customers = array_sum(array_column($cluster_metadata, 'customer_count'));
-                    foreach ($cluster_metadata as $cluster):
+                    foreach ($cluster_metadata as $index => $cluster):
                         $percentage = round(($cluster['customer_count'] / $total_customers) * 100, 1);
                     ?>
                     <div class="col-md-6 col-lg-4 mb-3">
                         <div class="card border-primary h-100">
                             <div class="card-header bg-primary text-white">
-                                <h6 class="mb-0">Cluster <?= $cluster['cluster_id'] ?>: <?= htmlspecialchars($cluster['cluster_name']) ?></h6>
+                                <h6 class="mb-0">Cluster <?= $index + 1 ?>: <?= htmlspecialchars($cluster['cluster_name']) ?></h6>
                             </div>
                             <div class="card-body">
                                 <p class="card-text"><?= htmlspecialchars($cluster['description']) ?></p>
