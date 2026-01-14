@@ -1,0 +1,15 @@
+[2026-01-13 05:14:46] [INFO] User logged out {"ip":"::1"}
+[2026-01-13 05:14:50] [INFO] User logged in successfully {"username":"admin","ip":"::1"}
+[2026-01-13 05:14:53] [INFO] K-Means converged {"iterations":42,"k":5}
+[2026-01-13 05:14:56] [INFO] Database updated with new cluster results {"count":10000}
+[2026-01-13 05:15:02] [DEBUG] Segmentation query executed {"type":"gender"}
+[2026-01-13 05:15:05] [DEBUG] Segmentation query executed {"type":"region"}
+[2026-01-13 05:15:08] [DEBUG] Segmentation query executed {"type":"gender"}
+[2026-01-13 05:15:11] [DEBUG] Segmentation query executed {"type":"age_group"}
+[2026-01-13 05:15:16] [DEBUG] Segmentation query executed {"type":"income_bracket"}
+[2026-01-13 05:15:19] [DEBUG] Segmentation query executed {"type":"cluster"}
+[2026-01-13 05:17:49] [DEBUG] Segmentation query executed {"type":"cluster"}
+[2026-01-13 05:17:58] [DEBUG] Segmentation query executed {"type":"age_group"}
+[2026-01-13 05:18:06] [DEBUG] Segmentation query executed {"type":"purchase_tier"}
+[2026-01-13 05:18:58] [DEBUG] Segmentation query executed {"type":"cluster"}
+[2026-01-13 05:34:26] [DEBUG] Segmentation query executed {"type":"cluster"}
